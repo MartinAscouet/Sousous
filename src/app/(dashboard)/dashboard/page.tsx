@@ -1,3 +1,4 @@
+import Link from "next/link";
 import {
   Wallet,
   TrendingUp,
@@ -42,9 +43,12 @@ export default function DashboardPage() {
           <button className="px-3.5 py-2 rounded-lg bg-slate-900 border border-slate-800 hover:border-slate-700 text-slate-300 text-xs font-medium transition-all flex items-center gap-1.5">
             <RefreshCw className="w-3.5 h-3.5 text-slate-400" /> Actualiser les cours
           </button>
-          <button className="px-4 py-2 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-semibold transition-all flex items-center gap-1.5 shadow-lg shadow-emerald-500/20">
+          <Link
+            href="/dashboard/assets/add"
+            className="px-4 py-2 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-semibold transition-all flex items-center gap-1.5 shadow-lg shadow-emerald-500/20"
+          >
             <PlusCircle className="w-4 h-4" /> Ajouter un actif
-          </button>
+          </Link>
         </div>
       </div>
 
