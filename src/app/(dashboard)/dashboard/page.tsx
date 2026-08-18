@@ -11,6 +11,7 @@ import {
   PieChart as PieChartIcon,
 } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
+import BankAccountsList from "@/components/BankAccountsList";
 
 export default function DashboardPage() {
   // Données financières initiales de démonstration
@@ -211,6 +212,11 @@ export default function DashboardPage() {
             </div>
           </div>
         </div>
+      </div>
+
+      {/* 🏦 SYNCHRONISATION BANCAIRE EN DIRECT (WOOB / CMB) */}
+      <div className="pt-4 border-t border-slate-800/80">
+        <BankAccountsList />
       </div>
     </div>
   );
