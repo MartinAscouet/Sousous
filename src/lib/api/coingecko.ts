@@ -45,12 +45,11 @@ export async function getMultipleCryptoPrices(
     });
 
     if (response.status === 429) {
-      console.warn("[CoinGecko] Limite de débit (Rate Limit) atteinte sur l'API gratuite.");
       return {};
     }
 
     if (!response.ok) {
-      throw new Error(`Erreur CoinGecko HTTP ${response.status}: ${response.statusText}`);
+      return {};
     }
 
     const data: Record<
@@ -72,8 +71,7 @@ export async function getMultipleCryptoPrices(
     });
 
     return result;
-  } catch (error) {
-    console.error("[CoinGecko Error] Échec de récupération des cours crypto :", error);
+  } catch {
     return {};
   }
 }

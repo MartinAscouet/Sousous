@@ -44,6 +44,11 @@ export default function BankAccountsList() {
         setError(json.error || "Impossible de récupérer les comptes bancaires.");
       } else {
         setData(json);
+        if (typeof window !== "undefined") {
+          window.dispatchEvent(
+            new CustomEvent("sousous_banking_updated", { detail: json })
+          );
+        }
       }
     } catch (err: any) {
       setError(err?.message || "Erreur de communication avec l'API.");
@@ -55,6 +60,15 @@ export default function BankAccountsList() {
 
   useEffect(() => {
     fetchAccounts();
+
+    const handleGlobalRefresh = () => {
+      fetchAccounts(true);
+    };
+
+    window.addEventListener("sousous_refresh_all", handleGlobalRefresh);
+    return () => {
+      window.removeEventListener("sousous_refresh_all", handleGlobalRefresh);
+    };
   }, []);
 
   const getAccountIcon = (type: string) => {
