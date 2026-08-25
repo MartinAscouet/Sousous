@@ -83,3 +83,22 @@ CREATE POLICY "Utilisateur peut uniquement lire ses snapshots"
 CREATE POLICY "Utilisateur peut uniquement insérer ses snapshots"
   ON portfolio_snapshots FOR INSERT
   WITH CHECK (auth.uid() = user_id);
+
+-- Table OAUTH_TOKENS
+ALTER TABLE IF EXISTS oauth_tokens ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Utilisateur ou service peut lire les oauth_tokens"
+  ON oauth_tokens FOR SELECT
+  USING (auth.uid() IS NULL OR auth.uid() = user_id);
+
+CREATE POLICY "Utilisateur ou service peut insérer les oauth_tokens"
+  ON oauth_tokens FOR INSERT
+  WITH CHECK (auth.uid() IS NULL OR auth.uid() = user_id);
+
+CREATE POLICY "Utilisateur ou service peut modifier les oauth_tokens"
+  ON oauth_tokens FOR UPDATE
+  USING (auth.uid() IS NULL OR auth.uid() = user_id);
+
+CREATE POLICY "Utilisateur ou service peut supprimer les oauth_tokens"
+  ON oauth_tokens FOR DELETE
+  USING (auth.uid() IS NULL OR auth.uid() = user_id);
