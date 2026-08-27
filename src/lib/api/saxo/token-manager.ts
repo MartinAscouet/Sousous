@@ -223,10 +223,10 @@ export class SaxoTokenManager {
    * Wrapper Fetch universel avec injection de Bearer token et gestion des 401
    */
   public async fetchWithAutoAuth<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-    const url = endpoint.startsWith("http") ? endpoint : `${this.getGatewayBaseUrl()}${endpoint}`;
-
-    // 1. Récupération d'un token valide avant requête
+    // 1. Récupération d'un token valide avant requête (charge également this.currentTokens)
     const token = await this.getValidAccessToken();
+    const gateway = this.getGatewayBaseUrl(this.currentTokens?.env);
+    const url = endpoint.startsWith("http") ? endpoint : `${gateway}${endpoint}`;
 
     const headers: Record<string, string> = {
       Accept: "application/json",
@@ -245,9 +245,11 @@ export class SaxoTokenManager {
       console.warn(`[SaxoTokenManager] ⚠️ 401 reçu sur ${endpoint}. Tentative de renouvellement forcé et replay...`);
       try {
         const freshToken = await this.forceRefresh();
+        const freshGateway = this.getGatewayBaseUrl(this.currentTokens?.env);
+        const retryUrl = endpoint.startsWith("http") ? endpoint : `${freshGateway}${endpoint}`;
         headers["Authorization"] = `Bearer ${freshToken}`;
 
-        res = await fetch(url, {
+        res = await fetch(retryUrl, {
           ...options,
           headers,
           cache: "no-store",
