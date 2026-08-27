@@ -61,15 +61,19 @@ export class SaxoTokenManager {
    */
   private async loadTokens(): Promise<SaxoOAuthTokens | null> {
     if (!this.currentTokens) {
+      console.log("[SaxoTokenManager] 🔍 Chargement initial des tokens...");
       const stored = await this.storage.loadTokens();
       if (stored) {
         // Vérification de cohérence d'environnement (ex: tokens obtenus sur SIM mais config en LIVE)
         if (stored.env && stored.env !== this.config.env) {
           console.warn(
-            `[SaxoTokenManager] ⚠️ Incohérence d'environnement : Tokens enregistrés en [${stored.env}] mais application en [${this.config.env}]. Réauthentification requise.`
+            `[SaxoTokenManager] ⚠️ Incohérence d'environnement : Tokens enregistrés en [${stored.env}] mais application configurée en [${this.config.env}].`
           );
         }
         this.currentTokens = stored;
+        console.log(`[SaxoTokenManager] 📦 Tokens en mémoire : accessToken=${stored.accessToken ? "présent" : "absent"}, refreshToken=${stored.refreshToken ? "présent" : "absent"}, expire à=${new Date(stored.expiresAt).toISOString()}`);
+      } else {
+        console.warn("[SaxoTokenManager] ⚠️ Aucun token disponible via le storage.");
       }
     }
     return this.currentTokens;
@@ -83,8 +87,8 @@ export class SaxoTokenManager {
     if (tokens.env && tokens.env !== this.config.env) return true;
     const now = Date.now();
     const safetyMarginMs = this.config.safetyMarginSeconds * 1000;
-    // Si la date d'expiration moins 5 minutes est déjà passée -> expiré
-    return now >= tokens.expiresAt - safetyMarginMs;
+    const isExp = now >= tokens.expiresAt - safetyMarginMs;
+    return isExp;
   }
 
   /**
@@ -99,7 +103,7 @@ export class SaxoTokenManager {
       return tokens.accessToken;
     }
 
-    console.log("[SaxoTokenManager] ⏳ Access Token expiré ou absent. Renouvellement automatique requis...");
+    console.log("[SaxoTokenManager] ⏳ Access Token expiré ou absent. Tentative de renouvellement automatique...");
     const newTokens = await this.refreshTokens();
     return newTokens.accessToken;
   }
@@ -121,9 +125,12 @@ export class SaxoTokenManager {
           tokens?.refreshToken ||
           process.env.SAXO_REFRESH_TOKEN;
 
+        console.log(`[SaxoTokenManager] 🔄 Refresh token préparé : ${refreshTokenToUse ? "présent (" + refreshTokenToUse.slice(0, 8) + "...)" : "ABSENT / NON DÉFINI"}`);
+        console.log(`[SaxoTokenManager] 🔑 AppKey: ${this.config.appKey ? "définie" : "MANQUANTE"}, AppSecret: ${this.config.appSecret ? "défini" : "MANQUANT"}, Env: ${this.config.env}`);
+
         if (!refreshTokenToUse) {
           throw new SaxoAuthError(
-            "Aucun refresh_token disponible pour le renouvellement du jeton Saxo.",
+            "Aucun refresh_token disponible pour le renouvellement du jeton Saxo (Veuillez vous reconnecter via /callback ou définir SAXO_REFRESH_TOKEN).",
             401,
             "REFRESH_TOKEN_MISSING"
           );
@@ -131,7 +138,7 @@ export class SaxoTokenManager {
 
         if (!this.config.appKey || !this.config.appSecret) {
           throw new SaxoAuthError(
-            "SAXO_APP_KEY et SAXO_APP_SECRET sont requis pour renouveler les tokens.",
+            "SAXO_APP_KEY et SAXO_APP_SECRET sont requis dans les variables d'environnement pour renouveler les tokens Saxo.",
             400,
             "CREDENTIALS_MISSING"
           );

@@ -69,6 +69,8 @@ export async function GET() {
     }
 
     // 2. Exécution du script Python avec transmission sécurisée par stdin (mémoire RAM uniquement)
+    console.log(`[Banking Route] 🐍 Lancement du script Python : ${scriptPath} avec l'exécutable : ${pythonExecutable}`);
+
     const runPythonProcess = (): Promise<{ stdout: string; stderr: string; code: number | null }> => {
       return new Promise((resolve, reject) => {
         const child = spawn(pythonExecutable, [scriptPath], {
@@ -99,8 +101,9 @@ export async function GET() {
           resolve({ stdout, stderr, code });
         });
 
-        child.on("error", (err) => {
+        child.on("error", (err: any) => {
           clearTimeout(timer);
+          console.error("[Banking Route] ❌ Erreur spawn Python (Python/Woob non installé ou indisponible) :", err.message);
           reject(err);
         });
 
@@ -117,16 +120,23 @@ export async function GET() {
       result = await runPythonProcess();
     } catch (err: any) {
       const isTimeout = err.message === "TIMEOUT";
+      const isNotFound = err.code === "ENOENT";
+      console.error("[Banking Route] ❌ Exception lors de l'exécution du processus Python :", err);
+
+      const errorMessage = isTimeout
+        ? "Le délai d'attente de synchronisation bancaire a expiré (Timeout)."
+        : isNotFound
+        ? "L'exécutable Python / Woob n'est pas disponible sur cet environnement serveur (Vercel Serverless)."
+        : "Échec de l'exécution du script de synchronisation bancaire.";
+
       return NextResponse.json(
         {
           success: false,
-          error: isTimeout
-            ? "Le délai d'attente de synchronisation bancaire a expiré (Timeout)."
-            : "Échec de l'exécution du script de synchronisation bancaire.",
-          errorCode: isTimeout ? "TIMEOUT" : "EXECUTION_ERROR",
+          error: errorMessage,
+          errorCode: isTimeout ? "TIMEOUT" : isNotFound ? "PYTHON_NOT_FOUND" : "EXECUTION_ERROR",
           details: err?.message || String(err),
         } as BankingApiResponse,
-        { status: isTimeout ? 504 : 500 }
+        { status: isTimeout ? 504 : isNotFound ? 503 : 500 }
       );
     }
 

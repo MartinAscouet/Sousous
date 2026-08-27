@@ -70,6 +70,7 @@ export class DatabaseTokenStorage implements ITokenStorage {
 
   public async loadTokens(): Promise<SaxoOAuthTokens | null> {
     try {
+      console.log(`[DatabaseTokenStorage] 🔍 Recherche de tokens en base Supabase pour provider='${this.provider}'...`);
       const conditions = [eq(oauthTokens.provider, this.provider)];
       if (this.userId) {
         conditions.push(eq(oauthTokens.userId, this.userId));
@@ -83,6 +84,7 @@ export class DatabaseTokenStorage implements ITokenStorage {
         .limit(1);
 
       if (!rows || rows.length === 0) {
+        console.log(`[DatabaseTokenStorage] ℹ️ Aucun token trouvé en base pour provider='${this.provider}'.`);
         return null;
       }
 
@@ -90,6 +92,8 @@ export class DatabaseTokenStorage implements ITokenStorage {
       const now = Date.now();
       const expiresAt = row.expiresAt.getTime();
       const expiresIn = Math.max(0, Math.floor((expiresAt - now) / 1000));
+
+      console.log(`[DatabaseTokenStorage] ✅ Tokens trouvés en base Supabase pour '${this.provider}' (env: ${row.env}, expire dans: ${expiresIn}s)`);
 
       const tokens: SaxoOAuthTokens = {
         accessToken: row.accessToken,
@@ -107,14 +111,15 @@ export class DatabaseTokenStorage implements ITokenStorage {
       };
 
       return tokens;
-    } catch (err) {
-      console.warn("[DatabaseTokenStorage] ⚠️ Impossible de lire les tokens en base :", err);
+    } catch (err: unknown) {
+      console.error("[DatabaseTokenStorage] ❌ Erreur lors de la lecture des tokens en base :", (err as Error).message);
       return null;
     }
   }
 
   public async saveTokens(tokens: SaxoOAuthTokens): Promise<void> {
     try {
+      console.log(`[DatabaseTokenStorage] 💾 Sauvegarde des tokens pour provider='${this.provider}'...`);
       const conditions = [eq(oauthTokens.provider, this.provider)];
       if (this.userId) {
         conditions.push(eq(oauthTokens.userId, this.userId));
@@ -162,8 +167,8 @@ export class DatabaseTokenStorage implements ITokenStorage {
         });
         console.log(`[DatabaseTokenStorage] 💾 Tokens ${this.provider} enregistrés en base de données Supabase.`);
       }
-    } catch (err) {
-      console.error("[DatabaseTokenStorage] ❌ Erreur lors de la sauvegarde des tokens en base :", err);
+    } catch (err: unknown) {
+      console.error("[DatabaseTokenStorage] ❌ Erreur lors de la sauvegarde des tokens en base :", (err as Error).message);
     }
   }
 
@@ -174,8 +179,8 @@ export class DatabaseTokenStorage implements ITokenStorage {
         conditions.push(eq(oauthTokens.userId, this.userId));
       }
       await db.delete(oauthTokens).where(and(...conditions));
-    } catch (err) {
-      console.warn("[DatabaseTokenStorage] ⚠️ Erreur lors de la suppression en base :", err);
+    } catch (err: unknown) {
+      console.warn("[DatabaseTokenStorage] ⚠️ Erreur lors de la suppression en base :", (err as Error).message);
     }
   }
 }
@@ -200,12 +205,14 @@ export class CompositeTokenStorage implements ITokenStorage {
     // 1. Essayer la base de données (compatible Vercel & multi-instances)
     const dbTokens = await this.dbStorage.loadTokens();
     if (dbTokens && dbTokens.accessToken) {
+      console.log("[CompositeTokenStorage] 🎯 Tokens chargés depuis Supabase Database.");
       return dbTokens;
     }
 
     // 2. Essayer le fichier JSON local (développement local)
     const fileTokens = await this.fileStorage.loadTokens();
     if (fileTokens && fileTokens.accessToken) {
+      console.log("[CompositeTokenStorage] 📁 Tokens chargés depuis le fichier local .saxo_tokens.json.");
       // Synchroniser en base de données pour la prochaine fois
       await this.dbStorage.saveTokens(fileTokens).catch(() => {});
       return fileTokens;
@@ -216,6 +223,7 @@ export class CompositeTokenStorage implements ITokenStorage {
     const envRefreshToken = process.env.SAXO_REFRESH_TOKEN;
 
     if (envAccessToken || envRefreshToken) {
+      console.log("[CompositeTokenStorage] ⚙️ Tokens chargés depuis les variables d'environnement (SAXO_ACCESS_TOKEN / SAXO_REFRESH_TOKEN).");
       const defaultTokens: SaxoOAuthTokens = {
         accessToken: envAccessToken || "",
         refreshToken: envRefreshToken || "",
@@ -229,6 +237,7 @@ export class CompositeTokenStorage implements ITokenStorage {
       return defaultTokens;
     }
 
+    console.warn("[CompositeTokenStorage] ⚠️ Aucun token trouvé (ni en base Supabase, ni en fichier local, ni dans process.env).");
     return null;
   }
 
