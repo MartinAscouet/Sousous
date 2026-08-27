@@ -2,15 +2,135 @@ import { NextResponse } from "next/server";
 import { spawn } from "child_process";
 import path from "path";
 import fs from "fs";
-import { BankingApiResponse } from "@/types/banking";
+import { BankingAccount, BankingApiResponse } from "@/types/banking";
 import { createClient } from "@/lib/supabase/server";
 import { db } from "@/db";
-import { bankCredentials } from "@/db/schema";
-import { eq } from "drizzle-orm";
+import { bankCredentials, bankCache } from "@/db/schema";
+import { eq, desc } from "drizzle-orm";
 import { decrypt } from "@/lib/encryption";
 
 // Forcer le rendu dynamique pour éviter la mise en cache statique de la route
 export const dynamic = "force-dynamic";
+
+/**
+ * Charge les derniers comptes bancaires enregistrés dans le cache Supabase
+ */
+async function loadCachedBankingAccounts(): Promise<BankingApiResponse | null> {
+  // 1. Tenter via Drizzle ORM
+  try {
+    const rows = await db
+      .select()
+      .from(bankCache)
+      .orderBy(desc(bankCache.updatedAt))
+      .limit(1);
+
+    if (rows && rows.length > 0) {
+      const row = rows[0];
+      console.log(`[Banking Cache] ✅ ${Array.isArray(row.accountsData) ? row.accountsData.length : 0} comptes chargés depuis Supabase via Drizzle.`);
+      return {
+        success: true,
+        accounts: row.accountsData as BankingAccount[],
+        totalBalance: Number(row.totalBalance),
+        currency: row.currency,
+        fetchedAt: row.syncedAt.toISOString(),
+      };
+    }
+  } catch (drizzleErr: unknown) {
+    console.warn("[Banking Cache] ⚠️ Échec lecture Drizzle, tentative via Supabase REST :", (drizzleErr as Error).message);
+  }
+
+  // 2. Fallback via Supabase REST API (HTTPS port 443)
+  try {
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    if (url && key) {
+      const { createClient: createSupabaseClient } = await import("@supabase/supabase-js");
+      const supabase = createSupabaseClient(url, key, { auth: { persistSession: false } });
+      const { data } = await supabase.from("bank_cache").select("*").order("updated_at", { ascending: false }).limit(1);
+      if (data && data.length > 0) {
+        const row = data[0];
+        console.log(`[Banking Cache] ✅ Comptes chargés depuis Supabase REST API.`);
+        return {
+          success: true,
+          accounts: (row.accounts_data || []) as BankingAccount[],
+          totalBalance: Number(row.total_balance || 0),
+          currency: row.currency || "EUR",
+          fetchedAt: row.synced_at || row.updated_at || new Date().toISOString(),
+        };
+      }
+    }
+  } catch (restErr: unknown) {
+    console.error("[Banking Cache] ❌ Erreur lecture REST :", (restErr as Error).message);
+  }
+
+  return null;
+}
+
+/**
+ * Sauvegarde la synthèse des comptes bancaires dans Supabase
+ */
+async function saveBankingAccountsToCache(data: BankingApiResponse): Promise<void> {
+  if (!data.success || !data.accounts) return;
+  const total = String(data.totalBalance || 0);
+  const curr = data.currency || "EUR";
+
+  try {
+    const existing = await db.select({ id: bankCache.id }).from(bankCache).limit(1);
+    if (existing && existing.length > 0) {
+      await db
+        .update(bankCache)
+        .set({
+          accountsData: data.accounts,
+          totalBalance: total,
+          currency: curr,
+          syncedAt: new Date(),
+          updatedAt: new Date(),
+        })
+        .where(eq(bankCache.id, existing[0].id));
+    } else {
+      await db.insert(bankCache).values({
+        bankModule: "cmb",
+        accountsData: data.accounts,
+        totalBalance: total,
+        currency: curr,
+      });
+    }
+    console.log("[Banking Cache] 💾 Comptes bancaires sauvegardés dans le cache Supabase (Drizzle) !");
+  } catch (drizzleErr: unknown) {
+    console.warn("[Banking Cache] ⚠️ Échec écriture Drizzle, tentative via REST...", (drizzleErr as Error).message);
+    try {
+      const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+      const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+      if (url && key) {
+        const { createClient: createSupabaseClient } = await import("@supabase/supabase-js");
+        const supabase = createSupabaseClient(url, key, { auth: { persistSession: false } });
+        const { data: existing } = await supabase.from("bank_cache").select("id").limit(1);
+        if (existing && existing.length > 0) {
+          await supabase
+            .from("bank_cache")
+            .update({
+              accounts_data: data.accounts,
+              total_balance: data.totalBalance || 0,
+              currency: curr,
+              synced_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", existing[0].id);
+        } else {
+          await supabase.from("bank_cache").insert({
+            bank_module: "cmb",
+            accounts_data: data.accounts,
+            total_balance: data.totalBalance || 0,
+            currency: curr,
+          });
+        }
+        console.log("[Banking Cache] 💾 Comptes bancaires sauvegardés dans le cache Supabase (REST) !");
+      }
+    } catch (restErr: unknown) {
+      console.error("[Banking Cache] ❌ Erreur sauvegarde REST :", (restErr as Error).message);
+    }
+  }
+}
 
 export async function GET() {
   try {
@@ -69,7 +189,7 @@ export async function GET() {
     }
 
     // 2. Exécution du script Python avec transmission sécurisée par stdin (mémoire RAM uniquement)
-    console.log(`[Banking Route] 🐍 Lancement du script Python : ${scriptPath} avec l'exécutable : ${pythonExecutable}`);
+    console.log(`[Banking Route] 🐍 Tentative d'exécution Python : ${scriptPath} via ${pythonExecutable}`);
 
     const runPythonProcess = (): Promise<{ stdout: string; stderr: string; code: number | null }> => {
       return new Promise((resolve, reject) => {
@@ -103,7 +223,7 @@ export async function GET() {
 
         child.on("error", (err: any) => {
           clearTimeout(timer);
-          console.error("[Banking Route] ❌ Erreur spawn Python (Python/Woob non installé ou indisponible) :", err.message);
+          console.warn("[Banking Route] ℹ️ Python non disponible dans cet environnement (Vercel Serverless) :", err.message);
           reject(err);
         });
 
@@ -119,30 +239,39 @@ export async function GET() {
     try {
       result = await runPythonProcess();
     } catch (err: any) {
-      const isTimeout = err.message === "TIMEOUT";
-      const isNotFound = err.code === "ENOENT";
-      console.error("[Banking Route] ❌ Exception lors de l'exécution du processus Python :", err);
+      console.log("[Banking Route] 🔄 Basculement automatique sur les données bancaires en cache Supabase...");
+      const cached = await loadCachedBankingAccounts();
+      if (cached && cached.accounts && cached.accounts.length > 0) {
+        return NextResponse.json(cached, {
+          status: 200,
+          headers: { "Cache-Control": "no-store, max-age=0" },
+        });
+      }
 
+      const isTimeout = err.message === "TIMEOUT";
       const errorMessage = isTimeout
         ? "Le délai d'attente de synchronisation bancaire a expiré (Timeout)."
-        : isNotFound
-        ? "L'exécutable Python / Woob n'est pas disponible sur cet environnement serveur (Vercel Serverless)."
-        : "Échec de l'exécution du script de synchronisation bancaire.";
+        : "Veuillez synchroniser vos comptes bancaires au moins une fois en local (avec votre environnement Python Woob) pour alimenter le tableau de bord en ligne.";
 
       return NextResponse.json(
         {
           success: false,
           error: errorMessage,
-          errorCode: isTimeout ? "TIMEOUT" : isNotFound ? "PYTHON_NOT_FOUND" : "EXECUTION_ERROR",
+          errorCode: isTimeout ? "TIMEOUT" : "LOCAL_SYNC_REQUIRED",
           details: err?.message || String(err),
         } as BankingApiResponse,
-        { status: isTimeout ? 504 : isNotFound ? 503 : 500 }
+        { status: isTimeout ? 504 : 200 }
       );
     }
 
     const { stdout, stderr, code } = result;
 
     if (!stdout.trim()) {
+      const cached = await loadCachedBankingAccounts();
+      if (cached && cached.accounts && cached.accounts.length > 0) {
+        return NextResponse.json(cached);
+      }
+
       return NextResponse.json(
         {
           success: false,
@@ -157,6 +286,11 @@ export async function GET() {
     try {
       const data: BankingApiResponse = JSON.parse(stdout);
       data.fetchedAt = new Date().toISOString();
+
+      // Sauvegarde immédiate dans le cache Supabase pour Vercel
+      if (data.success && data.accounts) {
+        await saveBankingAccountsToCache(data).catch(() => {});
+      }
 
       return NextResponse.json(data, {
         status: data.success ? 200 : (data.errorCode === "AUTH_REQUIRED" || data.errorCode === "2FA_REQUIRED" ? 401 : 400),
