@@ -161,15 +161,25 @@ export default function SaxoPortfolioView({ hideHeader = false }: SaxoPortfolioV
 
       {/* État d'erreur */}
       {!loading && error && (
-        <div className="p-5 rounded-2xl border border-rose-500/20 bg-rose-500/10 text-rose-200 space-y-3">
-          <div className="flex items-start gap-3">
-            <AlertCircle className="w-5 h-5 text-rose-400 mt-0.5 shrink-0" />
-            <div className="space-y-1">
-              <h4 className="text-sm font-semibold text-rose-300">
-                Impossible de synchroniser le compte Saxo Bank
-              </h4>
-              <p className="text-xs text-rose-200/80">{error}</p>
+        <div className="p-5 rounded-2xl border border-amber-500/20 bg-amber-500/10 text-amber-200 space-y-4">
+          <div className="flex items-start justify-between gap-3 flex-wrap">
+            <div className="flex items-start gap-3">
+              <AlertCircle className="w-5 h-5 text-amber-400 mt-0.5 shrink-0" />
+              <div className="space-y-1">
+                <h4 className="text-sm font-semibold text-amber-300">
+                  Authentification Saxo requise ou expirée
+                </h4>
+                <p className="text-xs text-amber-200/80">{error}</p>
+              </div>
             </div>
+
+            <a
+              href="/api/auth/saxo/login"
+              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold shadow-lg shadow-emerald-950/30 transition-all cursor-pointer"
+            >
+              <ArrowUpRight className="w-4 h-4" />
+              Se connecter à Saxo Bank
+            </a>
           </div>
         </div>
       )}
