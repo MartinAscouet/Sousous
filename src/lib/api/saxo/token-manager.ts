@@ -29,8 +29,8 @@ export class SaxoTokenManager {
 
   constructor(config?: Partial<SaxoAuthConfig>, storage?: ITokenStorage) {
     this.config = {
-      appKey: config?.appKey || process.env.SAXO_APP_KEY || "",
-      appSecret: config?.appSecret || process.env.SAXO_APP_SECRET || "",
+      appKey: (config?.appKey || process.env.SAXO_APP_KEY || "").replace(/^["']|["']$/g, "").trim(),
+      appSecret: (config?.appSecret || process.env.SAXO_APP_SECRET || "").replace(/^["']|["']$/g, "").trim(),
       env: (config?.env || process.env.SAXO_ENV || "live").toLowerCase() === "sim" ? "sim" : "live",
       authMethod: config?.authMethod || "basic",
       safetyMarginSeconds: config?.safetyMarginSeconds || 300, // 5 minutes de marge de sécurité
