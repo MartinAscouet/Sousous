@@ -70,9 +70,12 @@ export async function GET(request: NextRequest) {
       return responsePayload;
     })();
 
-    const result = await inFlightPromise;
-    inFlightPromise = null;
-    return NextResponse.json(result);
+    try {
+      const result = await inFlightPromise;
+      return NextResponse.json(result);
+    } finally {
+      inFlightPromise = null;
+    }
   } catch (error: unknown) {
     console.error("[Saxo API Route] ❌ Exception capturée dans /api/investments/saxo :", error);
     if (error instanceof SaxoApiError) {
