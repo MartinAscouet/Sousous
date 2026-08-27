@@ -236,6 +236,48 @@ const server = http.createServer(async (req, res) => {
         ...(tokenData.refresh_token ? { SAXO_REFRESH_TOKEN: tokenData.refresh_token } : {}),
       });
 
+      // 3. Sauvegarde directe dans Supabase (PostgreSQL) si DATABASE_URL est présent
+      if (process.env.DATABASE_URL) {
+        try {
+          const { default: postgres } = await import("postgres");
+          const sql = postgres(process.env.DATABASE_URL, { prepare: false });
+          const expiresAtDate = new Date(tokensPayload.expiresAt);
+          const refreshExpiresDate = tokensPayload.refreshTokenExpiresAt ? new Date(tokensPayload.refreshTokenExpiresAt) : null;
+
+          const existing = await sql`SELECT id FROM oauth_tokens WHERE provider = 'saxo' LIMIT 1`;
+          if (existing.length > 0) {
+            await sql`
+              UPDATE oauth_tokens
+              SET
+                access_token = ${tokensPayload.accessToken},
+                refresh_token = ${tokensPayload.refreshToken},
+                token_type = ${tokensPayload.tokenType},
+                expires_at = ${expiresAtDate},
+                refresh_token_expires_at = ${refreshExpiresDate},
+                scope = ${tokensPayload.scope || null},
+                base_uri = ${tokensPayload.baseUri || null},
+                env = ${tokensPayload.env || 'live'},
+                updated_at = NOW()
+              WHERE id = ${existing[0].id}
+            `;
+            console.log("[Persistance] 🗄️ Jetons Saxo synchronisés dans la table oauth_tokens sur Supabase !");
+          } else {
+            await sql`
+              INSERT INTO oauth_tokens (
+                provider, access_token, refresh_token, token_type, expires_at, refresh_token_expires_at, scope, base_uri, env
+              ) VALUES (
+                'saxo', ${tokensPayload.accessToken}, ${tokensPayload.refreshToken}, ${tokensPayload.tokenType},
+                ${expiresAtDate}, ${refreshExpiresDate}, ${tokensPayload.scope || null}, ${tokensPayload.baseUri || null}, ${tokensPayload.env || 'live'}
+              )
+            `;
+            console.log("[Persistance] 🗄️ Jetons Saxo insérés dans la table oauth_tokens sur Supabase !");
+          }
+          await sql.end();
+        } catch (dbErr) {
+          console.warn("[Persistance] ⚠️ Impossible d'écrire dans Supabase :", dbErr.message);
+        }
+      }
+
       // Page de confirmation visuelle
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
       res.end(`

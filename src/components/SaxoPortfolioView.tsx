@@ -54,14 +54,15 @@ export default function SaxoPortfolioView({ hideHeader = false }: SaxoPortfolioV
       const res = await fetch("/api/investments/saxo", {
         cache: "no-store",
       });
-      const json: SaxoApiResponse = await res.json();
+      const json: SaxoApiResponse = await res.json().catch(() => ({}) as SaxoApiResponse);
 
       if (!res.ok || !json.success || !json.pea) {
-        throw new Error(json.error || "Impossible de récupérer les données Saxo PEA");
+        const errorDetail = json.error || (json as any).details || `Erreur serveur [HTTP ${res.status}]`;
+        throw new Error(errorDetail);
       }
 
       setData(json.pea);
-      setEnvironment(json.environment || "sim");
+      setEnvironment(json.environment || "live");
       setLastSyncDate(new Date().toLocaleTimeString("fr-FR"));
 
       // Notifier le tableau de bord global
@@ -81,6 +82,15 @@ export default function SaxoPortfolioView({ hideHeader = false }: SaxoPortfolioV
   }, []);
 
   useEffect(() => {
+    // Vérifier si un message d'erreur est renvoyé par la route /callback dans l'URL
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      const urlError = params.get("saxo_error");
+      if (urlError) {
+        setError(`Retour Saxo : ${decodeURIComponent(urlError)}`);
+      }
+    }
+
     fetchSaxoData();
 
     const handleGlobalRefresh = () => {
