@@ -55,9 +55,20 @@ export class FileTokenStorage implements ITokenStorage {
   }
 }
 
+import { createClient } from "@supabase/supabase-js";
+
+function getSupabaseClient() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (!url || !key) return null;
+  return createClient(url, key, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+}
+
 /**
  * Adaptateur de stockage de tokens en base de données PostgreSQL (Supabase)
- * 100% compatible Vercel Serverless & multi-instances
+ * 100% compatible Vercel Serverless & multi-instances (Drizzle ORM + fallback Supabase REST API)
  */
 export class DatabaseTokenStorage implements ITokenStorage {
   private provider: string;
@@ -69,8 +80,9 @@ export class DatabaseTokenStorage implements ITokenStorage {
   }
 
   public async loadTokens(): Promise<SaxoOAuthTokens | null> {
+    // 1. Tenter via Drizzle ORM (Connexion PostgreSQL)
     try {
-      console.log(`[DatabaseTokenStorage] 🔍 Recherche de tokens en base Supabase pour provider='${this.provider}'...`);
+      console.log(`[DatabaseTokenStorage] 🔍 Recherche de tokens via Drizzle pour provider='${this.provider}'...`);
       const conditions = [eq(oauthTokens.provider, this.provider)];
       if (this.userId) {
         conditions.push(eq(oauthTokens.userId, this.userId));
@@ -83,43 +95,100 @@ export class DatabaseTokenStorage implements ITokenStorage {
         .orderBy(desc(oauthTokens.updatedAt))
         .limit(1);
 
-      if (!rows || rows.length === 0) {
-        console.log(`[DatabaseTokenStorage] ℹ️ Aucun token trouvé en base pour provider='${this.provider}'.`);
+      if (rows && rows.length > 0) {
+        const row = rows[0];
+        const now = Date.now();
+        const expiresAt = row.expiresAt.getTime();
+        const expiresIn = Math.max(0, Math.floor((expiresAt - now) / 1000));
+
+        console.log(`[DatabaseTokenStorage] ✅ Tokens trouvés via Drizzle pour '${this.provider}' (env: ${row.env}, expire dans: ${expiresIn}s)`);
+
+        return {
+          accessToken: row.accessToken,
+          refreshToken: row.refreshToken,
+          tokenType: row.tokenType || "Bearer",
+          expiresIn,
+          expiresAt,
+          refreshTokenExpiresAt: row.refreshTokenExpiresAt ? row.refreshTokenExpiresAt.getTime() : undefined,
+          refreshTokenExpiresIn: row.refreshTokenExpiresAt
+            ? Math.max(0, Math.floor((row.refreshTokenExpiresAt.getTime() - now) / 1000))
+            : undefined,
+          scope: row.scope || undefined,
+          baseUri: row.baseUri || undefined,
+          env: (row.env as SaxoEnvironment) || undefined,
+        };
+      }
+    } catch (drizzleErr: unknown) {
+      console.warn("[DatabaseTokenStorage] ⚠️ Échec Drizzle, basculement sur Supabase REST API :", (drizzleErr as Error).message);
+    }
+
+    // 2. Fallback via Supabase REST API (HTTPS Port 443 - toujours accessible même sans pooler direct)
+    try {
+      const supabase = getSupabaseClient();
+      if (!supabase) {
+        console.warn("[DatabaseTokenStorage] ⚠️ Client Supabase REST non initialisable (clés manquantes).");
         return null;
       }
 
-      const row = rows[0];
+      console.log(`[DatabaseTokenStorage] 🌐 Recherche de tokens via Supabase REST API pour provider='${this.provider}'...`);
+      let query = supabase
+        .from("oauth_tokens")
+        .select("*")
+        .eq("provider", this.provider);
+
+      if (this.userId) {
+        query = query.eq("user_id", this.userId);
+      }
+
+      const { data, error } = await query.order("updated_at", { ascending: false }).limit(1);
+
+      if (error) {
+        console.error("[DatabaseTokenStorage] ❌ Erreur Supabase REST :", error.message);
+        return null;
+      }
+
+      if (!data || data.length === 0) {
+        console.log(`[DatabaseTokenStorage] ℹ️ Aucun token trouvé en base via Supabase REST.`);
+        return null;
+      }
+
+      const row = data[0];
       const now = Date.now();
-      const expiresAt = row.expiresAt.getTime();
+      const expiresAt = new Date(row.expires_at).getTime();
       const expiresIn = Math.max(0, Math.floor((expiresAt - now) / 1000));
 
-      console.log(`[DatabaseTokenStorage] ✅ Tokens trouvés en base Supabase pour '${this.provider}' (env: ${row.env}, expire dans: ${expiresIn}s)`);
+      console.log(`[DatabaseTokenStorage] ✅ Tokens trouvés via Supabase REST pour '${this.provider}' (env: ${row.env}, expire dans: ${expiresIn}s)`);
 
-      const tokens: SaxoOAuthTokens = {
-        accessToken: row.accessToken,
-        refreshToken: row.refreshToken,
-        tokenType: row.tokenType || "Bearer",
+      return {
+        accessToken: row.access_token,
+        refreshToken: row.refresh_token,
+        tokenType: row.token_type || "Bearer",
         expiresIn,
         expiresAt,
-        refreshTokenExpiresAt: row.refreshTokenExpiresAt ? row.refreshTokenExpiresAt.getTime() : undefined,
-        refreshTokenExpiresIn: row.refreshTokenExpiresAt
-          ? Math.max(0, Math.floor((row.refreshTokenExpiresAt.getTime() - now) / 1000))
+        refreshTokenExpiresAt: row.refresh_token_expires_at ? new Date(row.refresh_token_expires_at).getTime() : undefined,
+        refreshTokenExpiresIn: row.refresh_token_expires_at
+          ? Math.max(0, Math.floor((new Date(row.refresh_token_expires_at).getTime() - now) / 1000))
           : undefined,
         scope: row.scope || undefined,
-        baseUri: row.baseUri || undefined,
+        baseUri: row.base_uri || undefined,
         env: (row.env as SaxoEnvironment) || undefined,
       };
-
-      return tokens;
-    } catch (err: unknown) {
-      console.error("[DatabaseTokenStorage] ❌ Erreur lors de la lecture des tokens en base :", (err as Error).message);
+    } catch (restErr: unknown) {
+      console.error("[DatabaseTokenStorage] ❌ Erreur lors de la lecture REST :", (restErr as Error).message);
       return null;
     }
   }
 
   public async saveTokens(tokens: SaxoOAuthTokens): Promise<void> {
+    const expiresAt = new Date(tokens.expiresAt);
+    const refreshTokenExpiresAt = tokens.refreshTokenExpiresAt
+      ? new Date(tokens.refreshTokenExpiresAt)
+      : null;
+
+    // 1. Tenter la sauvegarde via Drizzle ORM
+    let drizzleSaved = false;
     try {
-      console.log(`[DatabaseTokenStorage] 💾 Sauvegarde des tokens pour provider='${this.provider}'...`);
+      console.log(`[DatabaseTokenStorage] 💾 Sauvegarde des tokens via Drizzle pour provider='${this.provider}'...`);
       const conditions = [eq(oauthTokens.provider, this.provider)];
       if (this.userId) {
         conditions.push(eq(oauthTokens.userId, this.userId));
@@ -130,11 +199,6 @@ export class DatabaseTokenStorage implements ITokenStorage {
         .from(oauthTokens)
         .where(and(...conditions))
         .limit(1);
-
-      const expiresAt = new Date(tokens.expiresAt);
-      const refreshTokenExpiresAt = tokens.refreshTokenExpiresAt
-        ? new Date(tokens.refreshTokenExpiresAt)
-        : null;
 
       if (existing.length > 0) {
         await db
@@ -151,7 +215,7 @@ export class DatabaseTokenStorage implements ITokenStorage {
             updatedAt: new Date(),
           })
           .where(eq(oauthTokens.id, existing[0].id));
-        console.log(`[DatabaseTokenStorage] 💾 Tokens ${this.provider} mis à jour en base de données Supabase.`);
+        console.log(`[DatabaseTokenStorage] 💾 Tokens ${this.provider} mis à jour en base via Drizzle.`);
       } else {
         await db.insert(oauthTokens).values({
           provider: this.provider,
@@ -165,10 +229,58 @@ export class DatabaseTokenStorage implements ITokenStorage {
           baseUri: tokens.baseUri || null,
           env: tokens.env || null,
         });
-        console.log(`[DatabaseTokenStorage] 💾 Tokens ${this.provider} enregistrés en base de données Supabase.`);
+        console.log(`[DatabaseTokenStorage] 💾 Tokens ${this.provider} enregistrés en base via Drizzle.`);
       }
-    } catch (err: unknown) {
-      console.error("[DatabaseTokenStorage] ❌ Erreur lors de la sauvegarde des tokens en base :", (err as Error).message);
+      drizzleSaved = true;
+    } catch (drizzleErr: unknown) {
+      console.warn("[DatabaseTokenStorage] ⚠️ Échec écriture Drizzle, basculement Supabase REST :", (drizzleErr as Error).message);
+    }
+
+    // 2. Si Drizzle a échoué, sauvegarder via Supabase REST API
+    if (!drizzleSaved) {
+      try {
+        const supabase = getSupabaseClient();
+        if (supabase) {
+          console.log(`[DatabaseTokenStorage] 🌐 Sauvegarde des tokens via Supabase REST API...`);
+          let query = supabase.from("oauth_tokens").select("id").eq("provider", this.provider);
+          if (this.userId) query = query.eq("user_id", this.userId);
+          const { data: existing } = await query.limit(1);
+
+          if (existing && existing.length > 0) {
+            await supabase
+              .from("oauth_tokens")
+              .update({
+                access_token: tokens.accessToken,
+                refresh_token: tokens.refreshToken,
+                token_type: tokens.tokenType,
+                expires_at: expiresAt.toISOString(),
+                refresh_token_expires_at: refreshTokenExpiresAt?.toISOString() || null,
+                scope: tokens.scope || null,
+                base_uri: tokens.baseUri || null,
+                env: tokens.env || null,
+                updated_at: new Date().toISOString(),
+              })
+              .eq("id", existing[0].id);
+            console.log(`[DatabaseTokenStorage] 💾 Tokens ${this.provider} mis à jour via Supabase REST.`);
+          } else {
+            await supabase.from("oauth_tokens").insert({
+              provider: this.provider,
+              user_id: this.userId || null,
+              access_token: tokens.accessToken,
+              refresh_token: tokens.refreshToken,
+              token_type: tokens.tokenType,
+              expires_at: expiresAt.toISOString(),
+              refresh_token_expires_at: refreshTokenExpiresAt?.toISOString() || null,
+              scope: tokens.scope || null,
+              base_uri: tokens.baseUri || null,
+              env: tokens.env || null,
+            });
+            console.log(`[DatabaseTokenStorage] 💾 Tokens ${this.provider} créés via Supabase REST.`);
+          }
+        }
+      } catch (restErr: unknown) {
+        console.error("[DatabaseTokenStorage] ❌ Erreur sauvegarde Supabase REST :", (restErr as Error).message);
+      }
     }
   }
 
