@@ -38,7 +38,7 @@ export async function GET(request: NextRequest) {
       // Diagnostic direct du stockage
       const storage = new DatabaseTokenStorage("saxo");
       const directTokens = await storage.loadTokens();
-      log(`[Direct Storage Check] Tokens trouvés: ${!!directTokens}, accessToken: ${directTokens?.accessToken ? "présent (" + directTokens.accessToken.slice(0, 10) + "...)" : "aucun"}, env: ${directTokens?.env}, expiresAt: ${directTokens?.expiresAt ? new Date(directTokens.expiresAt).toISOString() : "aucun"}`);
+      log(`[Direct Storage Check] Supabase URL: ${process.env.NEXT_PUBLIC_SUPABASE_URL}, Tokens trouvés: ${!!directTokens}, accessToken: ${directTokens?.accessToken ? "présent (" + directTokens.accessToken.slice(0, 10) + "...)" : "aucun"}, env: ${directTokens?.env}, expiresAt: ${directTokens?.expiresAt ? new Date(directTokens.expiresAt).toISOString() : "aucun"}`);
 
       log("[Saxo API Route] 📡 Initialisation du client SaxoClient...");
       const client = new SaxoClient();
