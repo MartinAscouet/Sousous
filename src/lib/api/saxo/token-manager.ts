@@ -3,6 +3,7 @@ import {
   SaxoOAuthTokens,
   SaxoRawTokenResponse,
   ITokenStorage,
+  SaxoEnvironment,
 } from "./types";
 import { CompositeTokenStorage } from "./storage";
 
@@ -41,8 +42,9 @@ export class SaxoTokenManager {
   /**
    * Retourne l'URL du serveur d'authentification selon l'environnement (Live ou SIM)
    */
-  public getAuthBaseUrl(): string {
-    return this.config.env === "sim"
+  public getAuthBaseUrl(envOverride?: SaxoEnvironment): string {
+    const envToUse = envOverride || this.currentTokens?.env || this.config.env;
+    return envToUse === "sim"
       ? "https://sim.logonvalidation.net"
       : "https://live.logonvalidation.net";
   }
@@ -50,8 +52,9 @@ export class SaxoTokenManager {
   /**
    * Retourne l'URL de la passerelle OpenAPI selon l'environnement
    */
-  public getGatewayBaseUrl(): string {
-    return this.config.env === "sim"
+  public getGatewayBaseUrl(envOverride?: SaxoEnvironment): string {
+    const envToUse = envOverride || this.currentTokens?.env || this.config.env;
+    return envToUse === "sim"
       ? "https://gateway.saxobank.com/sim/openapi"
       : "https://gateway.saxobank.com/openapi";
   }
@@ -64,14 +67,8 @@ export class SaxoTokenManager {
       console.log("[SaxoTokenManager] 🔍 Chargement initial des tokens...");
       const stored = await this.storage.loadTokens();
       if (stored) {
-        // Vérification de cohérence d'environnement (ex: tokens obtenus sur SIM mais config en LIVE)
-        if (stored.env && stored.env !== this.config.env) {
-          console.warn(
-            `[SaxoTokenManager] ⚠️ Incohérence d'environnement : Tokens enregistrés en [${stored.env}] mais application configurée en [${this.config.env}].`
-          );
-        }
         this.currentTokens = stored;
-        console.log(`[SaxoTokenManager] 📦 Tokens en mémoire : accessToken=${stored.accessToken ? "présent" : "absent"}, refreshToken=${stored.refreshToken ? "présent" : "absent"}, expire à=${new Date(stored.expiresAt).toISOString()}`);
+        console.log(`[SaxoTokenManager] 📦 Tokens en mémoire : accessToken=${stored.accessToken ? "présent" : "absent"}, refreshToken=${stored.refreshToken ? "présent" : "absent"}, env=${stored.env || this.config.env}, expire à=${new Date(stored.expiresAt).toISOString()}`);
       } else {
         console.warn("[SaxoTokenManager] ⚠️ Aucun token disponible via le storage.");
       }
@@ -84,7 +81,6 @@ export class SaxoTokenManager {
    */
   public isTokenExpired(tokens: SaxoOAuthTokens | null): boolean {
     if (!tokens || !tokens.accessToken) return true;
-    if (tokens.env && tokens.env !== this.config.env) return true;
     const now = Date.now();
     const safetyMarginMs = this.config.safetyMarginSeconds * 1000;
     const isExp = now >= tokens.expiresAt - safetyMarginMs;
@@ -125,8 +121,10 @@ export class SaxoTokenManager {
           tokens?.refreshToken ||
           process.env.SAXO_REFRESH_TOKEN;
 
+        const targetEnv = (tokens?.env || this.config.env || "live").toLowerCase() === "sim" ? "sim" : "live";
+
         console.log(`[SaxoTokenManager] 🔄 Refresh token préparé : ${refreshTokenToUse ? "présent (" + refreshTokenToUse.slice(0, 8) + "...)" : "ABSENT / NON DÉFINI"}`);
-        console.log(`[SaxoTokenManager] 🔑 AppKey: ${this.config.appKey ? "définie" : "MANQUANTE"}, AppSecret: ${this.config.appSecret ? "défini" : "MANQUANT"}, Env: ${this.config.env}`);
+        console.log(`[SaxoTokenManager] 🔑 AppKey: ${this.config.appKey ? "définie" : "MANQUANTE"}, AppSecret: ${this.config.appSecret ? "défini" : "MANQUANT"}, Env cible: ${targetEnv}`);
 
         if (!refreshTokenToUse) {
           throw new SaxoAuthError(
@@ -144,7 +142,7 @@ export class SaxoTokenManager {
           );
         }
 
-        const tokenEndpoint = `${this.getAuthBaseUrl()}/token`;
+        const tokenEndpoint = `${this.getAuthBaseUrl(targetEnv)}/token`;
         const bodyParams = new URLSearchParams({
           grant_type: "refresh_token",
           refresh_token: refreshTokenToUse,
