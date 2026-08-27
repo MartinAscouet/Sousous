@@ -58,8 +58,8 @@ export class FileTokenStorage implements ITokenStorage {
 import { createClient } from "@supabase/supabase-js";
 
 function getSupabaseClient() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.replace(/^["']|["']$/g, "").trim();
+  const key = (process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY)?.replace(/^["']|["']$/g, "").trim();
   if (!url || !key) return null;
   return createClient(url, key, {
     auth: { persistSession: false, autoRefreshToken: false },
@@ -84,7 +84,6 @@ export class DatabaseTokenStorage implements ITokenStorage {
     try {
       const supabase = getSupabaseClient();
       if (supabase) {
-        console.log(`[DatabaseTokenStorage] 🌐 Recherche de tokens via Supabase REST API pour provider='${this.provider}'...`);
         let query = supabase
           .from("oauth_tokens")
           .select("*")
@@ -96,7 +95,9 @@ export class DatabaseTokenStorage implements ITokenStorage {
 
         const { data, error } = await query.order("updated_at", { ascending: false }).limit(1);
 
-        if (!error && data && data.length > 0) {
+        if (error) {
+          console.error(`[DatabaseTokenStorage] ❌ Erreur Supabase REST (${error.code}) : ${error.message} (details: ${error.details})`);
+        } else if (data && data.length > 0) {
           const row = data[0];
           const now = Date.now();
           const expiresAt = new Date(row.expires_at).getTime();
@@ -118,7 +119,11 @@ export class DatabaseTokenStorage implements ITokenStorage {
             baseUri: row.base_uri || undefined,
             env: (row.env as SaxoEnvironment) || undefined,
           };
+        } else {
+          console.warn(`[DatabaseTokenStorage] ⚠️ Aucun enregistrement trouvé dans la table oauth_tokens pour provider='${this.provider}'.`);
         }
+      } else {
+        console.warn("[DatabaseTokenStorage] ⚠️ Client Supabase REST non initialisable (clés manquantes).");
       }
     } catch (restErr: unknown) {
       console.warn("[DatabaseTokenStorage] ⚠️ Échec lecture Supabase REST :", (restErr as Error).message);
@@ -320,26 +325,7 @@ export class CompositeTokenStorage implements ITokenStorage {
       return fileTokens;
     }
 
-    // 3. Fallback sur les variables d'environnement initiales
-    const envAccessToken = process.env.SAXO_ACCESS_TOKEN;
-    const envRefreshToken = process.env.SAXO_REFRESH_TOKEN;
-
-    if (envAccessToken || envRefreshToken) {
-      console.log("[CompositeTokenStorage] ⚙️ Tokens chargés depuis les variables d'environnement (SAXO_ACCESS_TOKEN / SAXO_REFRESH_TOKEN).");
-      const defaultTokens: SaxoOAuthTokens = {
-        accessToken: envAccessToken || "",
-        refreshToken: envRefreshToken || "",
-        tokenType: "Bearer",
-        expiresIn: 86400, // 24h par défaut
-        expiresAt: Date.now() + 86400 * 1000,
-        env: (process.env.SAXO_ENV as SaxoEnvironment) || "live",
-      };
-      // Sauvegarder automatiquement en base pour persister
-      await this.dbStorage.saveTokens(defaultTokens).catch(() => {});
-      return defaultTokens;
-    }
-
-    console.warn("[CompositeTokenStorage] ⚠️ Aucun token trouvé (ni en base Supabase, ni en fichier local, ni dans process.env).");
+    console.warn("[CompositeTokenStorage] ⚠️ Aucun token trouvé (ni en base Supabase, ni en fichier local .saxo_tokens.json).");
     return null;
   }
 
