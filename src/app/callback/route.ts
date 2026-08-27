@@ -28,7 +28,7 @@ export async function GET(request: NextRequest) {
     const appKey = process.env.SAXO_APP_KEY?.replace(/^["']|["']$/g, "").trim() || "";
     const appSecret = process.env.SAXO_APP_SECRET?.replace(/^["']|["']$/g, "").trim() || "";
     const env = (process.env.SAXO_ENV || "live").toLowerCase() === "sim" ? "sim" : "live";
-    const redirectUri = process.env.SAXO_REDIRECT_URI?.replace(/^["']|["']$/g, "").trim() || `${baseUrl}/callback`;
+    const redirectUri = `${baseUrl}/callback`;
 
     const authHost = env === "sim" ? "https://sim.logonvalidation.net" : "https://live.logonvalidation.net";
     const tokenEndpoint = `${authHost}/token`;

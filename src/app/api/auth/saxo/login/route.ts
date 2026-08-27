@@ -8,7 +8,7 @@ export async function GET(request: NextRequest) {
     const baseUrl = request.nextUrl.origin;
     const appKey = process.env.SAXO_APP_KEY?.replace(/^["']|["']$/g, "").trim();
     const env = (process.env.SAXO_ENV || "live").toLowerCase() === "sim" ? "sim" : "live";
-    const redirectUri = process.env.SAXO_REDIRECT_URI?.replace(/^["']|["']$/g, "").trim() || `${baseUrl}/callback`;
+    const redirectUri = `${baseUrl}/callback`;
 
     if (!appKey) {
       return NextResponse.json(
