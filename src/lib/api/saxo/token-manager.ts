@@ -148,22 +148,16 @@ export class SaxoTokenManager {
         const bodyParams = new URLSearchParams({
           grant_type: "refresh_token",
           refresh_token: refreshTokenToUse,
+          client_id: this.config.appKey,
+          client_secret: this.config.appSecret,
         });
 
+        const basicAuth = Buffer.from(`${this.config.appKey}:${this.config.appSecret}`).toString("base64");
         const headers: Record<string, string> = {
           "Content-Type": "application/x-www-form-urlencoded",
+          Authorization: `Basic ${basicAuth}`,
           Accept: "application/json",
         };
-
-        // Méthode 1 : En-tête Authorization Basic base64(appKey:appSecret)
-        if (this.config.authMethod === "basic") {
-          const credentials = Buffer.from(`${this.config.appKey}:${this.config.appSecret}`).toString("base64");
-          headers["Authorization"] = `Basic ${credentials}`;
-        } else {
-          // Méthode 2 : Identifiants passés dans le corps de la requête
-          bodyParams.append("client_id", this.config.appKey);
-          bodyParams.append("client_secret", this.config.appSecret);
-        }
 
         console.log(`[SaxoTokenManager] 📡 Appel POST ${tokenEndpoint} (grant_type=refresh_token)...`);
 
