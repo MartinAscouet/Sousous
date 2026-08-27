@@ -80,7 +80,51 @@ export class DatabaseTokenStorage implements ITokenStorage {
   }
 
   public async loadTokens(): Promise<SaxoOAuthTokens | null> {
-    // 1. Tenter via Drizzle ORM (Connexion PostgreSQL)
+    // 1. Priorité à l'API REST Supabase (HTTPS Port 443 - instantané et sans problème de pooler TCP sous Vercel)
+    try {
+      const supabase = getSupabaseClient();
+      if (supabase) {
+        console.log(`[DatabaseTokenStorage] 🌐 Recherche de tokens via Supabase REST API pour provider='${this.provider}'...`);
+        let query = supabase
+          .from("oauth_tokens")
+          .select("*")
+          .eq("provider", this.provider);
+
+        if (this.userId) {
+          query = query.eq("user_id", this.userId);
+        }
+
+        const { data, error } = await query.order("updated_at", { ascending: false }).limit(1);
+
+        if (!error && data && data.length > 0) {
+          const row = data[0];
+          const now = Date.now();
+          const expiresAt = new Date(row.expires_at).getTime();
+          const expiresIn = Math.max(0, Math.floor((expiresAt - now) / 1000));
+
+          console.log(`[DatabaseTokenStorage] ✅ Tokens trouvés via Supabase REST pour '${this.provider}' (env: ${row.env}, expire dans: ${expiresIn}s)`);
+
+          return {
+            accessToken: row.access_token,
+            refreshToken: row.refresh_token,
+            tokenType: row.token_type || "Bearer",
+            expiresIn,
+            expiresAt,
+            refreshTokenExpiresAt: row.refresh_token_expires_at ? new Date(row.refresh_token_expires_at).getTime() : undefined,
+            refreshTokenExpiresIn: row.refresh_token_expires_at
+              ? Math.max(0, Math.floor((new Date(row.refresh_token_expires_at).getTime() - now) / 1000))
+              : undefined,
+            scope: row.scope || undefined,
+            baseUri: row.base_uri || undefined,
+            env: (row.env as SaxoEnvironment) || undefined,
+          };
+        }
+      }
+    } catch (restErr: unknown) {
+      console.warn("[DatabaseTokenStorage] ⚠️ Échec lecture Supabase REST :", (restErr as Error).message);
+    }
+
+    // 2. Fallback via Drizzle ORM (Connexion PostgreSQL)
     try {
       console.log(`[DatabaseTokenStorage] 🔍 Recherche de tokens via Drizzle pour provider='${this.provider}'...`);
       const conditions = [eq(oauthTokens.provider, this.provider)];
@@ -119,64 +163,10 @@ export class DatabaseTokenStorage implements ITokenStorage {
         };
       }
     } catch (drizzleErr: unknown) {
-      console.warn("[DatabaseTokenStorage] ⚠️ Échec Drizzle, basculement sur Supabase REST API :", (drizzleErr as Error).message);
+      console.warn("[DatabaseTokenStorage] ⚠️ Échec Drizzle :", (drizzleErr as Error).message);
     }
 
-    // 2. Fallback via Supabase REST API (HTTPS Port 443 - toujours accessible même sans pooler direct)
-    try {
-      const supabase = getSupabaseClient();
-      if (!supabase) {
-        console.warn("[DatabaseTokenStorage] ⚠️ Client Supabase REST non initialisable (clés manquantes).");
-        return null;
-      }
-
-      console.log(`[DatabaseTokenStorage] 🌐 Recherche de tokens via Supabase REST API pour provider='${this.provider}'...`);
-      let query = supabase
-        .from("oauth_tokens")
-        .select("*")
-        .eq("provider", this.provider);
-
-      if (this.userId) {
-        query = query.eq("user_id", this.userId);
-      }
-
-      const { data, error } = await query.order("updated_at", { ascending: false }).limit(1);
-
-      if (error) {
-        console.error("[DatabaseTokenStorage] ❌ Erreur Supabase REST :", error.message);
-        return null;
-      }
-
-      if (!data || data.length === 0) {
-        console.log(`[DatabaseTokenStorage] ℹ️ Aucun token trouvé en base via Supabase REST.`);
-        return null;
-      }
-
-      const row = data[0];
-      const now = Date.now();
-      const expiresAt = new Date(row.expires_at).getTime();
-      const expiresIn = Math.max(0, Math.floor((expiresAt - now) / 1000));
-
-      console.log(`[DatabaseTokenStorage] ✅ Tokens trouvés via Supabase REST pour '${this.provider}' (env: ${row.env}, expire dans: ${expiresIn}s)`);
-
-      return {
-        accessToken: row.access_token,
-        refreshToken: row.refresh_token,
-        tokenType: row.token_type || "Bearer",
-        expiresIn,
-        expiresAt,
-        refreshTokenExpiresAt: row.refresh_token_expires_at ? new Date(row.refresh_token_expires_at).getTime() : undefined,
-        refreshTokenExpiresIn: row.refresh_token_expires_at
-          ? Math.max(0, Math.floor((new Date(row.refresh_token_expires_at).getTime() - now) / 1000))
-          : undefined,
-        scope: row.scope || undefined,
-        baseUri: row.base_uri || undefined,
-        env: (row.env as SaxoEnvironment) || undefined,
-      };
-    } catch (restErr: unknown) {
-      console.error("[DatabaseTokenStorage] ❌ Erreur lors de la lecture REST :", (restErr as Error).message);
-      return null;
-    }
+    return null;
   }
 
   public async saveTokens(tokens: SaxoOAuthTokens): Promise<void> {
